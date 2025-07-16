@@ -4,7 +4,7 @@
  "description": "A Discord bot for the DVMS Garden Simulator.",
  "main": "main.js",
  "scripts": {
-  "start": "node main.js && node webserver.js"
+  "start": "node main.js"
  },
  "keywords": [],
  "author": "",
