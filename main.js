@@ -1,4 +1,5 @@
 require('dotenv').config({ quiet: true });
+const express = require('express'); // Import express
 
 const { Client, GatewayIntentBits, SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, PermissionsBitField, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
 const { createClient } = require('@supabase/supabase-js');
@@ -80,6 +81,20 @@ const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_KEY
 );
+
+// --- Web Server Setup ---
+const app = express();
+const port = process.env.PORT || 3000; // Render provides PORT env var
+
+app.get('/', (req, res) => {
+  res.send('Bot is alive!');
+});
+
+app.listen(port, () => {
+  console.log(`Web server running on port ${port}`);
+});
+// --- End Web Server Setup ---
+
 
 // Plant data with stock quantities, baseWeight, and luckChance
 const plants = {
@@ -291,7 +306,7 @@ const eggData = {
   },
   bee_egg: {
     rarity: 'Bee',
-    cost: 129,
+    cost: 30000000, // Changed from 129 to 30,000,000
     hatchTime: (4 * 60 + 10) * 60 * 1000,
     shopChance: 0.06,
     eggsShop: true,
@@ -353,14 +368,7 @@ const eggData = {
       mimic_octopus: 0.01,
     }
   },
-  oasis_egg: { // Marked unavailable (Harvest Shop)
-    rarity: 'Oasis',
-    cost: 10,
-    hatchTime: (4 * 60 + 10) * 60 * 1000,
-    shopChance: 0,
-    eggsShop: false,
-    hatchablePets: {} // No pets provided in image for this one
-  },
+  // oasis_egg has been removed as requested
   premium_oasis_egg: { // Marked unavailable (Limited Time Shop)
     rarity: 'Premium Oasis',
     cost: 199,
@@ -469,10 +477,10 @@ const getEmoji = (itemType, name, level, mutations = []) => {
     const baseEmojis = {
       carrot: ['🌱', '🥕', '🥕', '🥕', '🥕'], // Added level 4 emoji (same as 3 for now)
       strawberry: ['🌱', '🍓', '🍓', '🍓', '🍓'],
-      blueberry: ['🌱', '🫐', '�', '🫐', '🫐'],
+      blueberry: ['🌱', '🫐', '🫐', '🫐', '🫐'],
       orange_tulip: ['🌱', '🌷', '🌷', '🌷', '🌷'],
       tomato: ['🌱', '🍅', '🍅', '🍅', '🍅'],
-      corn: ['🌱', '🌽', '🌽', '🌽', '🌽'], // NEW PLANT EMOJI
+      corn: ['🌱', '🌽', '�', '🌽', '🌽'], // NEW PLANT EMOJI
       daffodil: ['🌱', '🌼', '🌼', '🌼', '🌼'],
       watermelon: ['🌱', '🍉', '🍉', '🍉', '🍉'],
       pumpkin: ['🌱', '🎃', '🎃', '🎃', '🎃'],
@@ -779,7 +787,9 @@ async function sendNotification(roleType, itemName, roleId) {
 // Update weather cron job (now calls the moved updateWeather function)
 cron.schedule('*/1 * * * *', async () => {
   const currentWeather = await updateWeather(); // Fetch current weather once
-  const { data: users, error: usersError } = await supabase.from('users').select('*');
+  const { data: users, error: usersError } = await supabase
+    .from('users')
+    .select('*');
 
   if (usersError) {
     console.error("Error fetching users for cron job:", usersError);
@@ -1241,6 +1251,9 @@ client.on('interactionCreate', async (interaction) => {
       const lastCalcTime = latestUserBeforeDisplay.last_growth_calculation_time ? new Date(latestUserBeforeDisplay.last_growth_calculation_time).getTime() : now;
       const timeSinceLastCalc = now - lastCalcTime;
 
+      // Determine if the garden is currently active for mutations/weather traits
+      const isActiveForMutations = new Date(newActiveUntil).getTime() > now; // Check against the *new* active until time
+
       for (let i = 0; i < updatedGarden.length; i++) {
           if (updatedGarden[i] && updatedGarden[i].plantedAt) {
               updatedGarden[i].totalGrowthTimeAccumulated = (updatedGarden[i].totalGrowthTimeAccumulated || 0) + timeSinceLastCalc;
@@ -1249,7 +1262,7 @@ client.on('interactionCreate', async (interaction) => {
               const baseGrowthTime = plantData.growthTime / 4;
               let adjustedGrowthTime = baseGrowthTime;
               // Apply growth boost only if garden is active
-              if (currentWeather && weatherData[currentWeather]?.growthBoost && (now < new Date(newActiveUntil).getTime())) {
+              if (isActiveForMutations && currentWeather && weatherData[currentWeather]?.growthBoost) {
                   adjustedGrowthTime /= (1 + weatherData[currentWeather].growthBoost);
               }
 
@@ -1265,7 +1278,7 @@ client.on('interactionCreate', async (interaction) => {
               // Apply mutations immediately if garden is activated/reactivated
               // This is done here to ensure the initial display is accurate
               // Only apply mutations if the garden is active
-              if (now < new Date(newActiveUntil).getTime()) {
+              if (isActiveForMutations) {
                 updatedGarden[i].mutations = applyMutations(updatedGarden[i].name, updatedGarden[i], latestUserBeforeDisplay, currentWeather);
               } else {
                 // If not active, clear mutations or keep previous ones without new application
@@ -1543,7 +1556,7 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         if (itemToSell.favourite) {
-            await interaction.editReply(`You cannot sell ${formatNameForDisplay(itemToToSell.name)} (Code: [${itemToSell.specialCode}]) because it is favourited. Unfavourite it first.`);
+            await interaction.editReply(`You cannot sell ${formatNameForDisplay(itemToSell.name)} (Code: [${itemToSell.specialCode}]) because it is favourited. Unfavourite it first.`);
             return;
         }
 
@@ -1565,11 +1578,13 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.editReply(replyMessage);
 
     } else if (command === 'shop') {
-      const { data: user } = await supabase
+      // Re-fetch user balance for the most up-to-date display
+      const { data: currentUserData } = await supabase
         .from('users')
         .select('balance')
         .eq('user_id', interaction.user.id)
         .single();
+      const currentBalance = currentUserData.balance;
 
       let { data: shop, error: shopError } = await supabase
         .from('shop')
@@ -1618,7 +1633,7 @@ client.on('interactionCreate', async (interaction) => {
         .setTitle('🌱 Sam\'s Seed Shop 🌱')
         .setColor('#00ff00')
         .addFields(
-          { name: '💰 Your Balance', value: `${user.balance} Sheckles`, inline: true },
+          { name: '💰 Your Balance', value: `${currentBalance} Sheckles`, inline: true },
           { name: '⏰ Next Restock', value: `<t:${nextRestockTimestamp}:R>`, inline: true }
         );
 
@@ -1673,35 +1688,108 @@ client.on('interactionCreate', async (interaction) => {
           .setStyle(ButtonStyle.Danger)
           .setDisabled(interaction.user.id !== ADMIN_ID)
       );
-      rows.push(adminRow); // This will always be the 5th row or less.
+      rows.push(adminRow);
 
       const message = await interaction.editReply({ embeds: [embed], components: rows });
+
+      // Define updateShopCountdown function that can access `message`
+      const updateShopCountdown = async () => {
+        const now = Date.now();
+        const timeLeft = Math.max(0, nextRestockTime - now);
+        
+        // Re-fetch latest shop data for accurate display
+        const { data: currentShopData } = await supabase
+          .from('shop')
+          .select('stock, last_restock')
+          .eq('id', 'global')
+          .single();
+        const currentStock = currentShopData?.stock || {};
+        const currentLastRestock = currentShopData?.last_restock ? new Date(currentShopData.last_restock) : new Date();
+        const currentNextRestockTime = currentLastRestock.getTime() + (Math.floor((now - currentLastRestock.getTime()) / restockInterval) + 1) * restockInterval;
+
+        // Re-fetch user balance for the most up-to-date display
+        const { data: currentBalanceData } = await supabase
+          .from('users')
+          .select('balance')
+          .eq('user_id', interaction.user.id)
+          .single();
+        const currentDisplayBalance = currentBalanceData?.balance || 0;
+
+
+        const currentEmbed = new EmbedBuilder()
+          .setTitle('🌱 Sam\'s Seed Shop 🌱')
+          .setColor('#00ff00')
+          .addFields(
+            { name: '💰 Your Balance', value: `${currentDisplayBalance} Sheckles`, inline: true },
+            { name: '⏰ Next Restock', value: timeLeft <= 0 ? 'Shop has restocked!' : `<t:${Math.floor(currentNextRestockTime / 1000)}:R>`, inline: true }
+          );
+
+        let currentStockDescription = '';
+        Object.entries(currentStock).forEach(([seed, quantity]) => {
+          if (quantity > 0 && plants[seed]) {
+            const basePrice = plants[seed].cost;
+            currentStockDescription += `${formatNameForDisplay(seed)} Seed (${plants[seed].rarity}) - ${basePrice} Sheckles (x${quantity})\n`;
+          }
+        });
+        currentEmbed.addFields({ name: 'Available Seeds', value: currentStockDescription || 'No seeds in stock!' });
+
+        const currentRows = [];
+        let currentRow = new ActionRowBuilder();
+        let buttonCount = 0;
+        let rowCount = 0;
+        const shopItems = Object.entries(currentStock).filter(([seed, quantity]) => quantity > 0 && plants[seed]);
+
+        for (const [seed, quantity] of shopItems) {
+          if (rowCount < 4) {
+            if (buttonCount === 3) {
+              currentRows.push(currentRow);
+              currentRow = new ActionRowBuilder();
+              buttonCount = 0;
+              rowCount++;
+              if (rowCount >= 4) break;
+            }
+            currentRow.addComponents(
+              new ButtonBuilder()
+                .setCustomId(`buy_${seed}`)
+                .setLabel(`Buy ${formatNameForDisplay(seed)} Seed x${quantity}`)
+                .setStyle(ButtonStyle.Primary)
+                .setEmoji(getEmoji('plant', seed, 0))
+                .setDisabled(quantity <= 0)
+            );
+            buttonCount++;
+          }
+        }
+        if (buttonCount > 0 && rowCount < 4) currentRows.push(currentRow);
+
+        const adminRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('restock_now')
+            .setLabel('Restock Now (Admin)')
+            .setStyle(ButtonStyle.Danger)
+            .setDisabled(interaction.user.id !== ADMIN_ID)
+        );
+        currentRows.push(adminRow);
+
+        try {
+          await message.edit({ embeds: [currentEmbed], components: currentRows });
+        } catch (e) {
+          console.error("Error updating shop message:", e);
+          clearInterval(shopTimers.get(message.id)); // Clear interval if message fails to update
+          shopTimers.delete(message.id);
+        }
+
+        if (timeLeft <= 0) {
+          clearInterval(shopTimers.get(message.id));
+          shopTimers.delete(message.id);
+        }
+      };
 
       if (shopTimers.has(message.id)) {
         clearInterval(shopTimers.get(message.id));
       }
-
-      const updateCountdown = () => {
-        const now = Date.now();
-        const timeLeft = Math.max(0, nextRestockTime - now);
-        if (timeLeft <= 0) {
-          clearInterval(shopTimers.get(message.id));
-          shopTimers.delete(message.id);
-          embed.spliceFields(1, 1, { name: '⏰ Next Restock', value: 'Shop has restocked!', inline: true });
-          // Ensure adminRow is included here
-          message.edit({ embeds: [embed], components: rows }).catch(e => console.error("Error updating shop message after restock:", e));
-        } else {
-          const minutes = Math.floor(timeLeft / (1000 * 60));
-          const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);
-          embed.spliceFields(1, 1, { name: '⏰ Next Restock', value: `${minutes}m ${seconds}s`, inline: true });
-          // Ensure adminRow is included here
-          message.edit({ embeds: [embed], components: rows }).catch(e => console.error("Error updating shop countdown message:", e));
-        }
-      };
-
-      const timer = setInterval(updateCountdown, 1000);
+      const timer = setInterval(updateShopCountdown, 1000);
       shopTimers.set(message.id, timer);
-      updateCountdown();
+      updateShopCountdown(); // Call immediately to show initial countdown
     } else if (command === 'inventory') {
       const page = interaction.options.getInteger('page') || 1;
       
@@ -1883,6 +1971,14 @@ client.on('interactionCreate', async (interaction) => {
         .eq('user_id', interaction.user.id);
       await interaction.editReply(`Unfavourited ${formatNameForDisplay(item.name)} (Code: [${item.specialCode}]). It can now be sold.`);
     } else if (command === 'petshop') {
+      // Re-fetch user balance for the most up-to-date display
+      const { data: currentUserData } = await supabase
+        .from('users')
+        .select('balance')
+        .eq('user_id', interaction.user.id)
+        .single();
+      const currentBalance = currentUserData.balance;
+
       let { data: petShop, error: petShopError } = await supabase
         .from('pet_eggs_shop')
         .select('*')
@@ -1914,7 +2010,7 @@ client.on('interactionCreate', async (interaction) => {
         .setTitle('🐾 Pet Egg Shop 🐾')
         .setColor('#FFD700')
         .addFields(
-          { name: '💰 Your Balance', value: `${user.balance} Sheckles`, inline: true },
+          { name: '💰 Your Balance', value: `${currentBalance} Sheckles`, inline: true },
           { name: '⏰ Next Restock', value: `<t:${nextRestockTimestamp}:R>`, inline: true }
         );
 
@@ -1965,27 +2061,98 @@ client.on('interactionCreate', async (interaction) => {
 
       const message = await interaction.editReply({ embeds: [embed], components: rows });
 
-      if (shopTimers.has(message.id)) {
-        clearInterval(shopTimers.get(message.id));
-      }
-      const updatePetCountdown = () => {
+      // Define updatePetShopCountdown function that can access `message`
+      const updatePetShopCountdown = async () => {
         const now = Date.now();
         const timeLeft = Math.max(0, nextRestockTime - now);
+
+        // Re-fetch latest pet shop data for accurate display
+        const { data: currentPetShopData } = await supabase
+          .from('pet_eggs_shop')
+          .select('stock, last_restock')
+          .eq('id', 'global')
+          .single();
+        const currentPetStock = currentPetShopData?.stock || {};
+        const currentLastPetRestock = currentPetShopData?.last_restock ? new Date(currentPetShopData.last_restock) : new Date();
+        const currentNextPetRestockTime = currentLastPetRestock.getTime() + (Math.floor((now - currentLastPetRestock.getTime()) / petRestockInterval) + 1) * petRestockInterval;
+
+        // Re-fetch user balance for the most up-to-date display
+        const { data: currentBalanceData } = await supabase
+          .from('users')
+          .select('balance')
+          .eq('user_id', interaction.user.id)
+          .single();
+        const currentDisplayBalance = currentBalanceData?.balance || 0;
+
+        const currentEmbed = new EmbedBuilder()
+          .setTitle('🐾 Pet Egg Shop 🐾')
+          .setColor('#FFD700')
+          .addFields(
+            { name: '💰 Your Balance', value: `${currentDisplayBalance} Sheckles`, inline: true },
+            { name: '⏰ Next Restock', value: timeLeft <= 0 ? 'Pet shop has restocked!' : `<t:${Math.floor(currentNextPetRestockTime / 1000)}:R>`, inline: true }
+          );
+
+        let currentStockDescription = '';
+        let eggsAvailable = false;
+        Object.entries(currentPetStock).forEach(([eggType, quantity]) => {
+          if (quantity > 0 && eggData[eggType] && eggData[eggType].eggsShop) {
+            const eggInfo = eggData[eggType];
+            currentStockDescription += `${getEmoji('pet_egg')} ${eggInfo.rarity} Egg - ${eggInfo.cost} Sheckles (x${quantity})\n`;
+            eggsAvailable = true;
+          }
+        });
+        currentEmbed.addFields({ name: 'Available Pet Eggs', value: currentStockDescription || 'No pet eggs in stock!' });
+
+        const currentRows = [];
+        let currentPetRow = new ActionRowBuilder();
+        let currentButtonCount = 0;
+        let currentRowCount = 0;
+
+        const currentPetShopItems = Object.entries(currentPetStock).filter(([eggType, quantity]) => quantity > 0 && eggData[eggType] && eggData[eggType].eggsShop);
+
+        for (const [eggType, quantity] of currentPetShopItems) {
+          if (currentRowCount < 5) {
+            if (currentButtonCount === 3) {
+              currentRows.push(currentPetRow);
+              currentPetRow = new ActionRowBuilder();
+              currentButtonCount = 0;
+              currentRowCount++;
+              if (currentRowCount >= 5) break;
+            }
+            currentPetRow.addComponents(
+              new ButtonBuilder()
+                .setCustomId(`buy_pet_egg_${eggType}`)
+                .setLabel(`Buy ${eggData[eggType].rarity} Egg`)
+                .setStyle(ButtonStyle.Primary)
+                .setEmoji(getEmoji('pet_egg'))
+                .setDisabled(quantity <= 0)
+            );
+            currentButtonCount++;
+          }
+        }
+        if (currentButtonCount > 0 && currentRowCount < 5) currentRows.push(currentPetRow);
+
+        try {
+          await message.edit({ embeds: [currentEmbed], components: currentRows });
+        } catch (e) {
+          console.error("Error updating pet shop message:", e);
+          clearInterval(shopTimers.get(message.id));
+          shopTimers.delete(message.id);
+        }
+
         if (timeLeft <= 0) {
           clearInterval(shopTimers.get(message.id));
           shopTimers.delete(message.id);
-          embed.spliceFields(1, 1, { name: '⏰ Next Restock', value: 'Pet shop has restocked!', inline: true });
-          message.edit({ embeds: [embed], components: rows }).catch(e => console.error("Error updating pet shop message after restock:", e));
-        } else {
-          const minutes = Math.floor(timeLeft / (1000 * 60));
-          const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);
-          embed.spliceFields(1, 1, { name: '⏰ Next Restock', value: `${minutes}m ${seconds}s`, inline: true });
-          message.edit({ embeds: [embed], components: rows }).catch(e => console.error("Error updating pet shop countdown message:", e));
         }
       };
-      const timer = setInterval(updatePetCountdown, 1000);
+
+      if (shopTimers.has(message.id)) {
+        clearInterval(shopTimers.get(message.id));
+      }
+      const timer = setInterval(updatePetShopCountdown, 1000);
       shopTimers.set(message.id, timer);
-      updateCountdown();
+      updatePetShopCountdown(); // Call immediately to show initial countdown
+
     } else if (command === 'hatch') {
       const inventoryIndex = interaction.options.getInteger('inventory_index') - 1;
 
@@ -2001,7 +2168,7 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      if (!(await checkInventoryCapacity(interaction.user.id))) {
+      if (!(await checkInventoryCapacity(userId))) {
         await interaction.editReply('Your inventory is full! Max 200 items. Make space for your new pet.');
         return;
       }
@@ -2043,7 +2210,7 @@ client.on('interactionCreate', async (interaction) => {
       await supabase
         .from('users')
         .update({ inventory: newInventory })
-        .eq('user_id', interaction.user.id);
+        .eq('user_id', userId); // Use userId directly
 
       await interaction.editReply(`You hatched a ${getEmoji('pet', hatchedPetName)} **${formatNameForDisplay(hatchedPetName)}** (${petData.rarity})! Its special code is [${newPet.specialCode}].`);
     } else if (command === 'shovel') {
@@ -2518,6 +2685,8 @@ client.on('interactionCreate', async (interaction) => {
     }
     
     if (interaction.customId.startsWith('buy_') || interaction.customId === 'restock_now') {
+      // This clearInterval is for the shop/petshop countdown timer.
+      // It's crucial to clear the interval associated with the message ID.
       if (shopTimers.has(interaction.message.id)) {
         clearInterval(shopTimers.get(interaction.message.id));
         shopTimers.delete(interaction.message.id);
@@ -2635,7 +2804,7 @@ client.on('interactionCreate', async (interaction) => {
 
         await interaction.editReply({ content: `Bought ${eggInfo.rarity} Egg for ${cost} Sheckles!`, ephemeral: true }); // Keep buy confirmation ephemeral
 
-        // Update the pet shop message
+        // Re-fetch latest shop data and user balance to update the message
         const { data: updatedPetShop } = await supabase
           .from('pet_eggs_shop')
           .select('stock, last_restock')
@@ -2647,14 +2816,19 @@ client.on('interactionCreate', async (interaction) => {
         const timeSinceLastPetRestock = now - lastPetRestock.getTime();
         const cyclesSinceLastPetRestock = Math.floor(timeSinceLastPetRestock / petRestockInterval);
         const nextPetRestockTime = lastPetRestock.getTime() + (cyclesSinceLastPetRestock + 1) * petRestockInterval;
-        const nextPetRestockTimestamp = Math.floor(nextPetRestockTime / 1000);
+        
+        const { data: currentUserBalance } = await supabase
+          .from('users')
+          .select('balance')
+          .eq('user_id', userId)
+          .single();
 
         const embed = new EmbedBuilder()
           .setTitle('🐾 Pet Egg Shop 🐾')
           .setColor('#FFD700')
           .addFields(
-            { name: '💰 Your Balance', value: `${user.balance - cost} Sheckles`, inline: true },
-            { name: '⏰ Next Restock', value: `<t:${nextPetRestockTimestamp}:R>`, inline: true }
+            { name: '💰 Your Balance', value: `${currentUserBalance.balance} Sheckles`, inline: true },
+            { name: '⏰ Next Restock', value: `<t:${Math.floor(nextPetRestockTime / 1000)}:R>`, inline: true }
           );
 
         let stockDescription = '';
@@ -2750,37 +2924,36 @@ client.on('interactionCreate', async (interaction) => {
         })
         .eq('user_id', userId);
 
-      const { data: updatedUser } = await supabase
-        .from('users')
-        .select('balance')
-        .eq('user_id', userId)
-        .single();
+      // Re-fetch latest shop data and user balance to update the message
       const { data: updatedShop } = await supabase
         .from('shop')
         .select('stock, last_restock')
         .eq('id', 'global')
         .single();
       const updatedStock = updatedShop.stock;
-
       const lastRestock = updatedShop.last_restock ? new Date(updatedShop.last_restock) : new Date();
       const restockInterval = 5 * 60 * 1000;
       const now = Date.now();
       const timeSinceLastRestock = now - lastRestock.getTime();
       const cyclesSinceLastRestock = Math.floor(timeSinceLastRestock / restockInterval);
       const nextRestockTime = lastRestock.getTime() + (cyclesSinceLastRestock + 1) * restockInterval;
-      const nextRestockTimestamp = Math.floor(nextRestockTime / 1000);
+      
+      const { data: currentUserBalance } = await supabase
+        .from('users')
+        .select('balance')
+        .eq('user_id', userId)
+        .single();
 
       const embed = new EmbedBuilder()
         .setTitle('🌱 Sam\'s Seed Shop 🌱')
         .setColor('#00ff00')
         .addFields(
-          { name: '💰 Your Balance', value: `${updatedUser.balance} Sheckles`, inline: true },
-          { name: '⏰ Next Restock', value: `<t:${nextRestockTimestamp}:R>`, inline: true }
+          { name: '💰 Your Balance', value: `${currentUserBalance.balance} Sheckles`, inline: true },
+          { name: '⏰ Next Restock', value: `<t:${Math.floor(nextRestockTime / 1000)}:R>`, inline: true }
         );
 
       let stockDescription = '';
       Object.entries(updatedStock).forEach(([sName, sQuantity]) => {
-        // Only display if quantity is positive AND the plant exists in our current plants data
         if (sQuantity > 0 && plants[sName]) { 
           const basePrice = plants[sName].cost;
           stockDescription += `${formatNameForDisplay(sName)} Seed (${plants[sName].rarity}) - ${basePrice} Sheckles (x${sQuantity})\n`;
@@ -2796,18 +2969,18 @@ client.on('interactionCreate', async (interaction) => {
       const rows = [];
       let currentRow = new ActionRowBuilder();
       let buttonCount = 0;
-      let shopRowCount = 0; // Renamed to avoid conflict with `rowCount` in the outer scope
+      let shopRowCount = 0;
 
       const shopItems = Object.entries(updatedStock).filter(([seed, quantity]) => quantity > 0 && plants[seed]);
 
       for (const [seed, quantity] of shopItems) {
-        if (shopRowCount < 4) { // Limit shop item rows to 4
+        if (shopRowCount < 4) {
           if (buttonCount === 3) {
             rows.push(currentRow);
             currentRow = new ActionRowBuilder();
             buttonCount = 0;
             shopRowCount++;
-            if (shopRowCount >= 4) break; // Stop adding new rows if limit reached
+            if (shopRowCount >= 4) break;
           }
           currentRow.addComponents(
             new ButtonBuilder()
@@ -2820,7 +2993,7 @@ client.on('interactionCreate', async (interaction) => {
           buttonCount++;
         }
       }
-      if (buttonCount > 0 && shopRowCount < 4) rows.push(currentRow); // Push the last incomplete row if space allows
+      if (buttonCount > 0 && shopRowCount < 4) rows.push(currentRow);
 
       const adminRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -2858,8 +3031,7 @@ client.on('interactionCreate', async (interaction) => {
       const timeSinceLastRestock = now - lastRestock.getTime();
       const cyclesSinceLastRestock = Math.floor(timeSinceLastRestock / restockInterval);
       const nextRestockTime = lastRestock.getTime() + (cyclesSinceLastRestock + 1) * restockInterval;
-      const nextRestockTimestamp = Math.floor(nextRestockTime / 1000);
-
+      
       const { data: currentUserBalance } = await supabase
         .from('users')
         .select('balance')
@@ -2871,7 +3043,7 @@ client.on('interactionCreate', async (interaction) => {
         .setColor('#00ff00')
         .addFields(
           { name: '💰 Your Balance', value: `${currentUserBalance.balance} Sheckles`, inline: true },
-          { name: '⏰ Next Restock', value: `<t:${nextRestockTimestamp}:R>`, inline: true }
+          { name: '⏰ Next Restock', value: `<t:${Math.floor(nextRestockTime / 1000)}:R>`, inline: true }
         );
 
       let stockDescription = '';
@@ -3092,7 +3264,7 @@ client.on('interactionCreate', async (interaction) => {
                 const baseGrowthTime = plantData.growthTime / 4;
                 let adjustedGrowthTime = baseGrowthTime;
                 // Apply growth boost only if garden is active
-                if (currentWeather && weatherData[currentWeather]?.growthBoost && (now < new Date(newActiveUntil).getTime())) {
+                if (new Date(newActiveUntil).getTime() > now && currentWeather && weatherData[currentWeather]?.growthBoost) {
                     adjustedGrowthTime /= (1 + weatherData[currentWeather].growthBoost);
                 }
 
@@ -3106,7 +3278,7 @@ client.on('interactionCreate', async (interaction) => {
                     gardenUpdatedForUser = true;
                 }
                 // Apply mutations immediately on refresh, as the garden is now active
-                if (now < new Date(newActiveUntil).getTime()) {
+                if (new Date(newActiveUntil).getTime() > now) {
                   updatedGarden[i].mutations = applyMutations(updatedGarden[i].name, updatedGarden[i], latestUserBeforeDisplay, currentWeather);
                 } else {
                   updatedGarden[i].mutations = updatedGarden[i].mutations || [];
