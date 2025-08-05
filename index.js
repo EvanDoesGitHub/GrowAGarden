@@ -4,12 +4,12 @@ async function resetGuild(interaction, guildId) {
         if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
             await interaction.reply({ 
                 content: '❌ You need Administrator permissions to use this command.', 
-                ephemeral: true 
+                flags: 64 // MessageFlags.Ephemeral
             });
             return;
         }
 
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: 64 }); // MessageFlags.Ephemeral
 
         const settings = guildSettings.get(guildId);
         
@@ -82,9 +82,17 @@ async function resetGuild(interaction, guildId) {
 
     } catch (error) {
         console.error('Error resetting guild:', error);
-        await interaction.editReply({ 
-            content: '❌ Failed to reset server data. Please try again.' 
-        });
+        // Check if interaction is still valid before replying
+        if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({ 
+                content: '❌ Failed to reset server data. Please try again.',
+                flags: 64
+            });
+        } else {
+            await interaction.editReply({ 
+                content: '❌ Failed to reset server data. Please try again.' 
+            });
+        }
     }
 }const { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } = require('discord.js');
 const { createClient } = require('@supabase/supabase-js');
@@ -132,6 +140,9 @@ const client = new Client({
 
 // Bad words filter (expand as needed)
 const badWords = ['spam', 'test123', 'badword'];
+
+// Track last message author per channel to prevent consecutive messages
+const lastMessageAuthor = new Map();
 
 // Cache for guild settings
 const guildSettings = new Map();
@@ -235,10 +246,10 @@ async function setWordChannel(interaction, guildId, channelId) {
         guildSettings.get(guildId).wordChannelId = channelId;
 
         console.log(`Word channel set for guild ${guildId}: ${channelId}`);
-        await interaction.reply({ content: '✅ Word channel set! Users can now only send one word at a time here.', ephemeral: true });
+        await interaction.reply({ content: '✅ Word channel set! Users can now only send one word at a time here.', flags: 64 });
     } catch (error) {
         console.error('Error setting word channel:', error);
-        await interaction.reply({ content: '❌ Failed to set word channel.', ephemeral: true });
+        await interaction.reply({ content: '❌ Failed to set word channel.', flags: 64 });
     }
 }
 
@@ -272,10 +283,10 @@ async function setStoryChannel(interaction, guildId, channelId) {
         settings.storyMessageId = message.id;
 
         console.log(`Story channel set for guild ${guildId}: ${channelId}, message: ${message.id}`);
-        await interaction.reply({ content: '✅ Story channel set! The collaborative story will be displayed here.', ephemeral: true });
+        await interaction.reply({ content: '✅ Story channel set! The collaborative story will be displayed here.', flags: 64 });
     } catch (error) {
         console.error('Error setting story channel:', error);
-        await interaction.reply({ content: '❌ Failed to set story channel.', ephemeral: true });
+        await interaction.reply({ content: '❌ Failed to set story channel.', flags: 64 });
     }
 }
 
