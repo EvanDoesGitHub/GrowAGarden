@@ -14,6 +14,22 @@ app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
 
+// Check required environment variables
+if (!process.env.DISCORD_TOKEN) {
+    console.error('❌ DISCORD_TOKEN environment variable is required');
+    process.exit(1);
+}
+
+if (!process.env.SUPABASE_URL) {
+    console.error('❌ SUPABASE_URL environment variable is required');
+    process.exit(1);
+}
+
+if (!process.env.SUPABASE_ANON_KEY) {
+    console.error('❌ SUPABASE_ANON_KEY environment variable is required');
+    process.exit(1);
+}
+
 // Supabase client
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
