@@ -345,9 +345,6 @@ async function showLeaderboard(interaction, guildId, page = 0) {
     }
 }
 
-// Track last message author per channel to prevent consecutive messages
-const lastMessageAuthor = new Map();
-
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
@@ -356,21 +353,20 @@ client.on('messageCreate', async message => {
     
     if (!settings || settings.wordChannelId !== channelId) return;
 
-    // Always delete the message first, then validate
-    await message.delete();
-
     console.log(`Message in word channel from ${author.username}: "${content}"`);
     console.log(`Guild settings:`, settings);
 
-    // If no story channel is set, don't process any words
+    // If no story channel is set, delete message and don't process
     if (!settings.storyChannelId) {
-        console.log(`No story channel set for guild ${guildId}, ignoring message`);
+        console.log(`No story channel set for guild ${guildId}, deleting message`);
+        await message.delete();
         return;
     }
 
     // Check if user sent the last message
     const lastAuthor = lastMessageAuthor.get(channelId);
     if (lastAuthor === author.id) {
+        await message.delete();
         // Send ephemeral-like warning by DMing the user
         try {
             await author.send(`❌ You can't send consecutive messages in the word channel! Wait for someone else to send a word.`);
@@ -384,6 +380,7 @@ client.on('messageCreate', async message => {
 
     // Check if single word
     if (content.trim().split(/\s+/).length > 1) {
+        await message.delete();
         try {
             await author.send(`❌ Only one word at a time in the word channel!`);
         } catch (error) {
@@ -394,6 +391,7 @@ client.on('messageCreate', async message => {
 
     // Check bad words
     if (badWords.some(bad => word.includes(bad))) {
+        await message.delete();
         try {
             await author.send(`❌ That word is not allowed in the word channel!`);
         } catch (error) {
@@ -411,6 +409,7 @@ client.on('messageCreate', async message => {
         .single();
 
     if (existing) {
+        await message.delete();
         try {
             await author.send(`❌ "${word}" has already been used in the story!`);
         } catch (error) {
@@ -419,7 +418,7 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    // Word is valid - save it and repost
+    // Word is valid - save it and keep the original message
     try {
         // Add to used words
         await supabase.from('used_words').insert({
@@ -442,19 +441,18 @@ client.on('messageCreate', async message => {
             word_count: (userWord?.word_count || 0) + 1
         });
 
-        // Send the valid word back to the channel
-        const wordChannel = client.channels.cache.get(channelId);
-        const validMessage = await wordChannel.send(content.trim());
-        await validMessage.react('✅');
+        // React to the original message (don't delete and repost)
+        await message.react('✅');
 
         // Update last message author
         lastMessageAuthor.set(channelId, author.id);
 
-        // Update story
-        await updateStory(guildId, settings, word);
+        // Update story using the original word casing
+        await updateStory(guildId, settings, content.trim());
 
     } catch (error) {
         console.error('Error processing word:', error);
+        await message.delete();
         try {
             await author.send('❌ Error processing your word. Please try again.');
         } catch (dmError) {
