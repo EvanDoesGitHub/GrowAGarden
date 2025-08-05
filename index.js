@@ -194,6 +194,11 @@ async function registerCommands() {
         new SlashCommandBuilder()
             .setName('reset')
             .setDescription('Reset all bot data for this server (deletes everything!)')
+            .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+        
+        new SlashCommandBuilder()
+            .setName('update')
+            .setDescription('Refresh the story channel with all current words')
             .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     ];
 
@@ -431,11 +436,12 @@ client.on('messageCreate', async message => {
 
     // Word is valid - save it and keep the original message
     try {
-        // Add to used words
+        // Add to used words with timestamp
         await supabase.from('used_words').insert({
             guild_id: guildId,
-            word: word,
-            user_id: author.id
+            word: content.trim(), // Use original casing for storage too
+            user_id: author.id,
+            created_at: new Date().toISOString()
         });
 
         // Update user count
@@ -482,28 +488,40 @@ async function updateStory(guildId, settings, newWord) {
         const storyMessage = await storyChannel.messages.fetch(settings.storyMessageId);
         if (!storyMessage) return;
 
-        // Get current story
-        const { data: story } = await supabase
-            .from('stories')
-            .select('content')
+        // Get ALL used words in chronological order to build the complete story
+        const { data: allWords } = await supabase
+            .from('used_words')
+            .select('word, created_at')
             .eq('guild_id', guildId)
-            .single();
+            .order('created_at', { ascending: true });
 
-        const currentStory = story?.content || '';
-        const newStory = currentStory ? `${currentStory} ${newWord}` : newWord;
+        if (!allWords || allWords.length === 0) {
+            // Update the embed with empty story
+            const embed = new EmbedBuilder()
+                .setTitle('📖 Collaborative Story')
+                .setDescription('*The story will appear here as words are added...*')
+                .setColor(0x5865F2)
+                .setFooter({ text: '0 words total' });
 
-        // Update database
+            await storyMessage.edit({ embeds: [embed] });
+            return;
+        }
+
+        // Build the complete story from all words
+        const completeStory = allWords.map(wordData => wordData.word).join(' ');
+
+        // Update story in database
         await supabase.from('stories').upsert({
             guild_id: guildId,
-            content: newStory
+            content: completeStory
         });
 
-        // Update message
+        // Update the embed with complete story
         const embed = new EmbedBuilder()
             .setTitle('📖 Collaborative Story')
-            .setDescription(newStory)
+            .setDescription(completeStory)
             .setColor(0x5865F2)
-            .setFooter({ text: `${newStory.split(' ').length} words total` });
+            .setFooter({ text: `${allWords.length} words total` });
 
         await storyMessage.edit({ embeds: [embed] });
 
