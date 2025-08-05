@@ -180,7 +180,7 @@ async function showLeaderboard(interaction, guildId, page = 0) {
             .range(offset, offset + itemsPerPage - 1);
 
         if (!leaderboard?.length) {
-            await interaction.reply({ content: '📊 No words have been sent yet! Start the story in your word channel.', ephemeral: true });
+            await interaction.reply({ content: '📊 No words have been sent yet! Start the story in your word channel.' });
             return;
         }
 
@@ -229,9 +229,12 @@ async function showLeaderboard(interaction, guildId, page = 0) {
         }
     } catch (error) {
         console.error('Leaderboard error:', error);
-        await interaction.reply({ content: '❌ Failed to load leaderboard.', ephemeral: true });
+        await interaction.reply({ content: '❌ Failed to load leaderboard.' });
     }
 }
+
+// Track last message author per channel to prevent consecutive messages
+const lastMessageAuthor = new Map();
 
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
@@ -241,21 +244,45 @@ client.on('messageCreate', async message => {
     
     if (!settings || settings.wordChannelId !== channelId) return;
 
+    // Always delete the message first, then validate
+    await message.delete();
+
+    // If no story channel is set, don't process any words
+    if (!settings.storyChannelId) {
+        return;
+    }
+
+    // Check if user sent the last message
+    const lastAuthor = lastMessageAuthor.get(channelId);
+    if (lastAuthor === author.id) {
+        // Send ephemeral-like warning by DMing the user
+        try {
+            await author.send(`❌ You can't send consecutive messages in the word channel! Wait for someone else to send a word.`);
+        } catch (error) {
+            // If DM fails, user has DMs disabled - silently ignore
+        }
+        return;
+    }
+
     const word = content.trim().toLowerCase();
 
     // Check if single word
     if (content.trim().split(/\s+/).length > 1) {
-        await message.delete();
-        const warning = await message.channel.send(`❌ <@${author.id}> Only one word at a time!`);
-        setTimeout(() => warning.delete().catch(() => {}), 3000);
+        try {
+            await author.send(`❌ Only one word at a time in the word channel!`);
+        } catch (error) {
+            // Silently ignore DM failures
+        }
         return;
     }
 
     // Check bad words
     if (badWords.some(bad => word.includes(bad))) {
-        await message.delete();
-        const warning = await message.channel.send(`❌ <@${author.id}> That word is not allowed!`);
-        setTimeout(() => warning.delete().catch(() => {}), 3000);
+        try {
+            await author.send(`❌ That word is not allowed in the word channel!`);
+        } catch (error) {
+            // Silently ignore DM failures
+        }
         return;
     }
 
@@ -268,13 +295,15 @@ client.on('messageCreate', async message => {
         .single();
 
     if (existing) {
-        await message.delete();
-        const warning = await message.channel.send(`❌ <@${author.id}> "${word}" has already been used!`);
-        setTimeout(() => warning.delete().catch(() => {}), 3000);
+        try {
+            await author.send(`❌ "${word}" has already been used in the story!`);
+        } catch (error) {
+            // Silently ignore DM failures
+        }
         return;
     }
 
-    // Word is valid - save it
+    // Word is valid - save it and repost
     try {
         // Add to used words
         await supabase.from('used_words').insert({
@@ -297,15 +326,24 @@ client.on('messageCreate', async message => {
             word_count: (userWord?.word_count || 0) + 1
         });
 
+        // Send the valid word back to the channel
+        const wordChannel = client.channels.cache.get(channelId);
+        const validMessage = await wordChannel.send(content.trim());
+        await validMessage.react('✅');
+
+        // Update last message author
+        lastMessageAuthor.set(channelId, author.id);
+
         // Update story
         await updateStory(guildId, settings, word);
-        await message.react('✅');
 
     } catch (error) {
         console.error('Error processing word:', error);
-        await message.delete();
-        const errorMsg = await message.channel.send('❌ Error processing your word.');
-        setTimeout(() => errorMsg.delete().catch(() => {}), 3000);
+        try {
+            await author.send('❌ Error processing your word. Please try again.');
+        } catch (dmError) {
+            // Silently ignore DM failures
+        }
     }
 });
 
