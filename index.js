@@ -1,100 +1,4 @@
-async function resetGuild(interaction, guildId) {
-    try {
-        // Double-check admin permissions
-        if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-            await interaction.reply({ 
-                content: '❌ You need Administrator permissions to use this command.', 
-                flags: 64 // MessageFlags.Ephemeral
-            });
-            return;
-        }
-
-        await interaction.deferReply({ flags: 64 }); // MessageFlags.Ephemeral
-
-        const settings = guildSettings.get(guildId);
-        
-        // Clear all messages from word channel if it exists
-        if (settings?.wordChannelId) {
-            try {
-                const wordChannel = client.channels.cache.get(settings.wordChannelId);
-                if (wordChannel) {
-                    console.log(`Clearing messages from word channel ${settings.wordChannelId}`);
-                    // Fetch and delete messages in batches (Discord API limit)
-                    let fetched;
-                    do {
-                        fetched = await wordChannel.messages.fetch({ limit: 100 });
-                        if (fetched.size > 0) {
-                            await wordChannel.bulkDelete(fetched);
-                        }
-                    } while (fetched.size >= 2);
-                }
-            } catch (error) {
-                console.error('Error clearing word channel messages:', error);
-            }
-        }
-
-        // Clear all messages from story channel if it exists
-        if (settings?.storyChannelId) {
-            try {
-                const storyChannel = client.channels.cache.get(settings.storyChannelId);
-                if (storyChannel) {
-                    console.log(`Clearing messages from story channel ${settings.storyChannelId}`);
-                    // Fetch and delete messages in batches
-                    let fetched;
-                    do {
-                        fetched = await storyChannel.messages.fetch({ limit: 100 });
-                        if (fetched.size > 0) {
-                            await storyChannel.bulkDelete(fetched);
-                        }
-                    } while (fetched.size >= 2);
-                }
-            } catch (error) {
-                console.error('Error clearing story channel messages:', error);
-            }
-        }
-
-        // Delete all data from Supabase for this guild
-        const deletePromises = [
-            supabase.from('guild_channels').delete().eq('guild_id', guildId),
-            supabase.from('used_words').delete().eq('guild_id', guildId),
-            supabase.from('user_words').delete().eq('guild_id', guildId),
-            supabase.from('stories').delete().eq('guild_id', guildId)
-        ];
-
-        await Promise.all(deletePromises);
-
-        // Clear from local cache
-        guildSettings.delete(guildId);
-        if (settings?.wordChannelId) {
-            lastMessageAuthor.delete(settings.wordChannelId);
-        }
-
-        console.log(`Guild ${guildId} has been completely reset`);
-        
-        await interaction.editReply({ 
-            content: '🗑️ **Server Reset Complete!**\n\n' +
-                    '✅ All word and story channels cleared\n' +
-                    '✅ All messages deleted from channels\n' +
-                    '✅ All user data and leaderboard reset\n' +
-                    '✅ All used words forgotten\n\n' +
-                    '*You can now set up new channels with `/setwordchannel` and `/setstorychannel`*'
-        });
-
-    } catch (error) {
-        console.error('Error resetting guild:', error);
-        // Check if interaction is still valid before replying
-        if (!interaction.replied && !interaction.deferred) {
-            await interaction.reply({ 
-                content: '❌ Failed to reset server data. Please try again.',
-                flags: 64
-            });
-        } else {
-            await interaction.editReply({ 
-                content: '❌ Failed to reset server data. Please try again.' 
-            });
-        }
-    }
-}const { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } = require('discord.js');
+const { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } = require('discord.js');
 const { createClient } = require('@supabase/supabase-js');
 const express = require('express');
 
@@ -222,11 +126,12 @@ client.on('interactionCreate', async interaction => {
             await showLeaderboard(interaction, guildId);
         } else if (commandName === 'reset') {
             await resetGuild(interaction, guildId);
+        } else if (commandName === 'update') {
+            await updateStoryCommand(interaction, guildId);
         }
     } else if (interaction.isButton()) {
         const [action, direction, page] = interaction.customId.split('_');
         if (action === 'leaderboard') {
-            await interaction.deferUpdate();
             await showLeaderboard(interaction, interaction.guildId, parseInt(page));
         }
     }
@@ -297,6 +202,12 @@ async function setStoryChannel(interaction, guildId, channelId) {
 
 async function showLeaderboard(interaction, guildId, page = 0) {
     try {
+        // Acknowledge the interaction immediately to prevent it from expiring
+        // This handles the initial command and subsequent button clicks
+        if (!interaction.replied && !interaction.deferred) {
+            await interaction.deferReply();
+        }
+
         const itemsPerPage = 10;
         const offset = page * itemsPerPage;
 
@@ -308,7 +219,7 @@ async function showLeaderboard(interaction, guildId, page = 0) {
             .range(offset, offset + itemsPerPage - 1);
 
         if (!leaderboard?.length) {
-            await interaction.reply({ content: '📊 No words have been sent yet! Start the story in your word channel.' });
+            await interaction.editReply({ content: '📊 No words have been sent yet! Start the story in your word channel.' });
             return;
         }
 
@@ -350,14 +261,139 @@ async function showLeaderboard(interaction, guildId, page = 0) {
         const options = { embeds: [embed] };
         if (row.components.length > 0) options.components = [row];
 
-        if (interaction.replied || interaction.deferred) {
-            await interaction.editReply(options);
-        } else {
-            await interaction.reply(options);
-        }
+        await interaction.editReply(options);
     } catch (error) {
         console.error('Leaderboard error:', error);
-        await interaction.reply({ content: '❌ Failed to load leaderboard.' });
+        // Use editReply if the interaction was deferred
+        if (interaction.deferred) {
+            await interaction.editReply({ content: '❌ Failed to load leaderboard.' });
+        } else {
+            // Fallback in case deferral failed
+            await interaction.reply({ content: '❌ Failed to load leaderboard.' });
+        }
+    }
+}
+
+async function resetGuild(interaction, guildId) {
+    try {
+        // Double-check admin permissions
+        if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+            await interaction.reply({ 
+                content: '❌ You need Administrator permissions to use this command.', 
+                flags: 64 // MessageFlags.Ephemeral
+            });
+            return;
+        }
+
+        await interaction.deferReply({ flags: 64 }); // MessageFlags.Ephemeral
+
+        const settings = guildSettings.get(guildId);
+        
+        // Clear all messages from word channel if it exists
+        if (settings?.wordChannelId) {
+            try {
+                const wordChannel = client.channels.cache.get(settings.wordChannelId);
+                if (wordChannel) {
+                    console.log(`Clearing messages from word channel ${settings.wordChannelId}`);
+                    // Fetch and delete messages in batches (Discord API limit)
+                    let fetched;
+                    do {
+                        fetched = await wordChannel.messages.fetch({ limit: 100 });
+                        if (fetched.size > 0) {
+                            await wordChannel.bulkDelete(fetched);
+                        }
+                    } while (fetched.size >= 2);
+                }
+            } catch (error) {
+                console.error('Error clearing word channel messages:', error);
+            }
+        }
+
+        // Clear all messages from story channel if it exists
+        if (settings?.storyChannelId) {
+            try {
+                const storyChannel = client.channels.cache.get(settings.storyChannelId);
+                if (storyChannel) {
+                    console.log(`Clearing messages from story channel ${settings.storyChannelId}`);
+                    // Fetch and delete messages in batches
+                    let fetched;
+                    do {
+                        fetched = await storyChannel.messages.fetch({ limit: 100 });
+                        if (fetched.size > 0) {
+                            await storyChannel.bulkDelete(fetched);
+                        }
+                    } while (fetched.size >= 2);
+                }
+            } catch (error) {
+                console.error('Error clearing story channel messages:', error);
+            }
+        }
+
+        // Delete all data from Supabase for this guild
+        const deletePromises = [
+            supabase.from('guild_channels').delete().eq('guild_id', guildId),
+            supabase.from('used_words').delete().eq('guild_id', guildId),
+            supabase.from('user_words').delete().eq('guild_id', guildId),
+            supabase.from('stories').delete().eq('guild_id', guildId)
+        ];
+
+        await Promise.all(deletePromises);
+
+        // Clear from local cache
+        guildSettings.delete(guildId);
+        if (settings?.wordChannelId) {
+            lastMessageAuthor.delete(settings.wordChannelId);
+        }
+
+        console.log(`Guild ${guildId} has been completely reset`);
+        
+        await interaction.editReply({ 
+            content: '🗑️ **Server Reset Complete!**\n\n' +
+                '✅ All word and story channels cleared\n' +
+                '✅ All messages deleted from channels\n' +
+                '✅ All user data and leaderboard reset\n' +
+                '✅ All used words forgotten\n\n' +
+                '*You can now set up new channels with `/setwordchannel` and `/setstorychannel`*'
+        });
+
+    } catch (error) {
+        console.error('Error resetting guild:', error);
+        // Check if interaction is still valid before replying
+        if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({ 
+                content: '❌ Failed to reset server data. Please try again.',
+                flags: 64
+            });
+        } else {
+            await interaction.editReply({ 
+                content: '❌ Failed to reset server data. Please try again.' 
+            });
+        }
+    }
+}
+
+async function updateStoryCommand(interaction, guildId) {
+    try {
+        await interaction.deferReply({ flags: 64 });
+        const settings = guildSettings.get(guildId);
+        if (!settings || !settings.storyChannelId || !settings.storyMessageId) {
+            await interaction.editReply('❌ No story channel has been set up yet. Use `/setstorychannel` first.');
+            return;
+        }
+
+        const success = await updateStory(guildId, settings);
+        if (success) {
+            await interaction.editReply('✅ Story channel has been successfully updated with all words from the database.');
+        } else {
+            await interaction.editReply('❌ Failed to update the story. Check the console logs for details.');
+        }
+    } catch (error) {
+        console.error('Error with /update command:', error);
+        if (interaction.deferred) {
+             await interaction.editReply('❌ An unexpected error occurred while trying to update the story.');
+        } else {
+            await interaction.reply('❌ An unexpected error occurred while trying to update the story.');
+        }
     }
 }
 
@@ -478,15 +514,15 @@ client.on('messageCreate', async message => {
     }
 });
 
-async function updateStory(guildId, settings, newWord) {
-    if (!settings.storyChannelId || !settings.storyMessageId) return;
+async function updateStory(guildId, settings) {
+    if (!settings.storyChannelId || !settings.storyMessageId) return false;
 
     try {
         const storyChannel = client.channels.cache.get(settings.storyChannelId);
-        if (!storyChannel) return;
+        if (!storyChannel) return false;
 
         const storyMessage = await storyChannel.messages.fetch(settings.storyMessageId);
-        if (!storyMessage) return;
+        if (!storyMessage) return false;
 
         // Get ALL used words in chronological order to build the complete story
         const { data: allWords } = await supabase
@@ -504,7 +540,7 @@ async function updateStory(guildId, settings, newWord) {
                 .setFooter({ text: '0 words total' });
 
             await storyMessage.edit({ embeds: [embed] });
-            return;
+            return true;
         }
 
         // Build the complete story from all words
@@ -524,9 +560,11 @@ async function updateStory(guildId, settings, newWord) {
             .setFooter({ text: `${allWords.length} words total` });
 
         await storyMessage.edit({ embeds: [embed] });
+        return true;
 
     } catch (error) {
         console.error('Story update error:', error);
+        return false;
     }
 }
 
