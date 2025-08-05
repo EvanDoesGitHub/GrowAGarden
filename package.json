@@ -1,19 +1,29 @@
 {
- "name": "evan-bang-simulator-bot",
- "version": "1.0.0",
- "description": "A Discord bot for the DVMS Garden Simulator.",
- "main": "main.js",
- "scripts": {
-  "start": "node main.js"
- },
- "keywords": [],
- "author": "",
- "license": "ISC",
- "dependencies": {
-  "@supabase/supabase-js": "^2.50.4",
-  "discord.js": "^14.21.0",
-  "dotenv": "^17.2.0",
-  "express": "^5.1.0",
-  "node-cron": "^4.2.0"
- }
+  "name": "discord-word-bot",
+  "version": "1.0.0",
+  "description": "A Discord bot for collaborative word storytelling",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "@supabase/supabase-js": "^2.39.0",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "storytelling",
+    "word-game"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
 }
